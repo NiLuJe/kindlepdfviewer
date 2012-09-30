@@ -18,7 +18,7 @@
 --[[
 Codes for rotation modes:
 
-1 for no rotation, 
+1 for no rotation,
 2 for landscape with bottom on the right side of screen, etc.
 
            2
@@ -26,8 +26,8 @@ Codes for rotation modes:
    | +----------+ |
    | |          | |
    | | Freedom! | |
-   | |          | |  
-   | |          | |  
+   | |          | |
+   | |          | |
  3 | |          | | 1
    | |          | |
    | |          | |
@@ -38,6 +38,7 @@ Codes for rotation modes:
           0
 --]]
 
+require "dialog"
 
 Screen = {
 	cur_rotation_mode = 0,
@@ -67,7 +68,7 @@ function Screen:screenRotate(orien)
 end
 
 function Screen:updateRotationMode()
-	if KEY_FW_DOWN == 116 then -- in EMU mode always set to 0
+	if util.isEmulated() == 1 then -- in EMU mode always set to 0
 		self.cur_rotation_mode = 0
 	else
 		orie_fd = assert(io.open("/sys/module/eink_fb_hal_broads/parameters/bs_orientation", "r"))
@@ -109,13 +110,17 @@ end
 
 
 function Screen:screenshot()
-	lfs.mkdir("./screenshots")
-	local start = os.clock()
-	--showInfoMsgWithDelay("making screenshot... ", 1000, 1)
+	if util.isEmulated() == 1 then
+		return
+	end
+	local secs, usecs = util.gettime()
 	self:fb2bmp("/dev/fb0", lfs.currentdir().."/screenshots/"..os.date("%Y%m%d%H%M%S")..".bmp", true, nil)
+	local nsecs, nusecs = util.gettime()
+	local diff = nsecs - secs + (nusecs - usecs)/1000000
 	--self:fb2bmp("/dev/fb0", lfs.currentdir().."/screenshots/"..os.date("%Y%m%d%H%M%S")..".bmp", true, "bzip2 ")
 	--self:fb2pgm("/dev/fb0", lfs.currentdir().."/screenshots/"..os.date("%Y%m%d%H%M%S")..".pgm", "bzip2 ", 4)
-	showInfoMsgWithDelay(string.format("Screenshot is ready in %.2f(s) ", os.clock()-start), 1000, 1)
+	local msg = "Screenshot is ready in "
+	InfoMessage:inform(msg..string.format("%.2fs ", diff), 2000, 1, MSG_WARN, msg..(diff*1000).." milliseconds")
 end
 
 -- NuPogodi (02.07.2012): added the functions to save the fb-content in common graphic files - bmp & pgm.
@@ -123,7 +128,7 @@ end
 
 function Screen:LE(x) -- converts positive upto 32bit-number to a little-endian for bmp-header
 	local s, n = "", 4
-	if x<0x10000 then 
+	if x<0x10000 then
 		s = string.char(0,0)
 		n = 2
 	end
@@ -143,49 +148,52 @@ a vertical flip that makes it a bit slower, namely,
 NB: needs free memory of G_width*G_height/2 bytes to manupulate the fb-content! ]]
 
 function Screen:fb2bmp(fin, fout, vflip, pack) -- atm, for 4bpp framebuffers only
-	local inputf = assert(io.open(fin,"rb"))
+	local inputf = io.open(fin,"rb")
 	if inputf then
-		local outputf, size = assert(io.open(fout,"wb"))
-		-- writing bmp-header
-		outputf:write(string.char(0x42,0x4D,0xF6,0xA9,3,0,0,0,0,0,0x76,0,0,0,40,0),
-				self:LE(G_width), self:LE(G_height),	-- width & height: 4 chars each
-				string.char(0,0,1,0,4,0,0,0,0,0),
-				self:LE(G_height*G_width/2),		-- raw bytes in image
-				string.char(0x87,0x19,0,0,0x87,0x19,0,0),	-- 6536 pixel/m = 166 dpi for both x&y resolutions
-				string.char(16,0,0,0,0,0,0,0))		-- 16 colors
-		local line, i = G_width/2, 15
-		-- add palette to bmp-header
-		while i>=0 do
-			outputf:write(string.char(i*16+i):rep(3), string.char(0))
-			i=i-1
-		end
-		if vflip then -- flip image vertically to make it bmp-compliant
-			-- read the fb-content line-by-line & fill the content-table in the inversed order
-			local content = {}
-			for i=1, G_height do
-				table.insert(content, 1, inputf:read(line))
+		local outputf, size = io.open(fout,"wb")
+		if outputf then
+			-- writing bmp-header
+			outputf:write(string.char(0x42,0x4D,0xF6,0xA9,3,0,0,0,0,0,0x76,0,0,0,40,0),
+					self:LE(G_width), self:LE(G_height),	-- width & height: 4 chars each
+					string.char(0,0,1,0,4,0,0,0,0,0),
+					self:LE(G_height*G_width/2),		-- raw bytes in image
+					string.char(0x87,0x19,0,0,0x87,0x19,0,0),	-- 6536 pixel/m = 166 dpi for both x&y resolutions
+					string.char(16,0,0,0,0,0,0,0))		-- 16 colors
+			local line, i = G_width/2, 15
+			-- add palette to bmp-header
+			while i>=0 do
+				outputf:write(string.char(i*16+i):rep(3), string.char(0))
+				i=i-1
 			end
-			-- write the v-flipped bmp-data
-			for i=1, G_height do
-				outputf:write(content[i])
+			if vflip then -- flip image vertically to make it bmp-compliant
+				-- read the fb-content line-by-line & fill the content-table in the inversed order
+				local content = {}
+				for i=1, G_height do
+					table.insert(content, 1, inputf:read(line))
+				end
+				-- write the v-flipped bmp-data
+				for i=1, G_height do
+					outputf:write(content[i])
+				end
+			else -- without v-flip, it takes only 0.02s @ 600x800, 4bpp
+				outputf:write(inputf:read("*all"))
 			end
-		else -- without v-flip, it takes only 0.02s @ 600x800, 4bpp
-			outputf:write(inputf:read("*all")) 
-		end
+			outputf:close()
+			-- here one may use either standard archivers (bzip2, gzip)
+			-- or standalone converters (bmp2png, bmp2gif)
+			if pack then os.execute(pack..fout) end
+		end -- if output f
 		inputf:close()
-		outputf:close()
-		-- here one may use either standard archivers (bzip2, gzip)
-		-- or standalone converters (bmp2png, bmp2gif)
-		if pack then os.execute(pack..fout) end
-	end
+	end -- if inputf
 end
 
 --[[ This function saves the fb-content (both 4bpp and 8bpp) as 8bpp PGM and pack it.
 It's relatively slow for 4bpp devices such as
 	~2.5s @ K2 and K3 > 600x800, 4bpp
-	~5.0s @ KDX > 824x1200, 
+	~5.0s @ KDX > 824x1200,
 but should be very fast (<<0.1s) when no color conversion (4bpp>8bpp) is needed. ]]
 
+--[[
 function Screen:fb2pgm(fin, fout, pack, bpp)
 	local inputf = assert(io.open(fin,"rb"))
 	if inputf then
@@ -196,7 +204,7 @@ function Screen:fb2pgm(fin, fout, pack, bpp)
 		else	-- convert 4bpp to 8bpp; needs free memory just to store a block = G_width/2 bytes
 			local bpp8, block, i, j, line = {}, G_width/2
 			-- to accelerate a process, let us first create the convertion table: char (0..255) > 2 chars
-			for j=0, 255 do 
+			for j=0, 255 do
 				i = j%16
 				bpp8[#bpp8+1] = string.char(255-j+i, 255-i*16)
 			end
@@ -213,4 +221,4 @@ function Screen:fb2pgm(fin, fout, pack, bpp)
 		if pack then os.execute(pack..fout) end
 	end
 end
-
+]]

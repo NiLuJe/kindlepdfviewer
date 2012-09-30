@@ -23,7 +23,6 @@ require "crereader"
 require "filechooser"
 require "settings"
 require "screen"
-require "keys"
 require "commands"
 require "dialog"
 require "extentions"
@@ -43,7 +42,7 @@ function openFile(filename)
 
 	reader = ext:getReader(file_type)
 	if reader then
-		InfoMessage:show("Opening document, please wait... ", 0)
+		InfoMessage:inform("Opening document... ", nil, 0, MSG_AUX)
 		reader:preLoadSettings(filename)
 		local ok, err = reader:open(filename)
 		if ok then
@@ -53,8 +52,12 @@ function openFile(filename)
 			G_reader_settings:saveSetting("lastfile", filename)
 			return reader:inputLoop()
 		else
-			InfoMessage:show("Error opening document.", 0)
-			util.sleep(2)
+			if err then
+				Debug("openFile(): "..err)
+				InfoMessage:inform(err:sub(1,30), 2000, 1, MSG_ERROR)
+			else
+				InfoMessage:inform("Error opening document! ", 2000, 1, MSG_ERROR)
+			end
 		end
 	end
 	return true -- on failed attempts, we signal to keep running
@@ -87,6 +90,8 @@ if optarg["h"] then
 end
 
 if not optarg["d"] then
+	Debug = function() end
+	dump = function() end
 	debug = function() end
 end
 
@@ -104,9 +109,8 @@ else
 	input.open("/dev/input/event1")
 
 	-- check if we are running on Kindle 3 (additional volume input)
-	local f=lfs.attributes("/dev/input/event2")
-	if f then
-		print("Auto-detected Kindle 3")
+	if FileExists("/dev/input/event2") then
+		Debug("Auto-detected Kindle 3")
 		input.open("/dev/input/event2")
 		setK3Keycodes()
 	end
@@ -124,8 +128,19 @@ Screen.native_rotation_mode = Screen.cur_rotation_mode
 G_reader_settings = DocSettings:open(".reader")
 fontmap = G_reader_settings:readSetting("fontmap")
 if fontmap ~= nil then
-	Font.fontmap = fontmap
+	-- we need to iterate over all fonts used in reader to support upgrade from older configuration
+	for name,path in pairs(fontmap) do
+		if Font.fontmap[name] then
+			Font.fontmap[name] = path
+		else
+			Debug("missing "..name.." in user configuration, using default font "..path)
+		end
+	end
 end
+
+-- set up the mode to manage files
+FileChooser.filemanager_expert_mode = G_reader_settings:readSetting("filemanager_expert_mode") or 1
+InfoMessage:initInfoMessageSettings()
 
 -- initialize global settings shared among all readers
 UniReader:initGlobalSettings(G_reader_settings)
@@ -140,16 +155,11 @@ if ARGV[optind] and lfs.attributes(ARGV[optind], "mode") == "directory" then
 	local running = true
 	FileChooser:setPath(ARGV[optind])
 	while running do
-		local file, callback = FileChooser:choose(0, G_height)
-		if callback then
-			callback()
+		local file = FileChooser:choose(0, G_height)
+		if file then
+			running = openFile(file)
 		else
-			if file ~= nil then
-				running = openFile(file)
-				print(file)
-			else
-				running = false
-			end
+			running = false
 		end
 	end
 elseif ARGV[optind] and lfs.attributes(ARGV[optind], "mode") == "file" then
@@ -163,6 +173,7 @@ end
 
 -- save reader settings
 G_reader_settings:saveSetting("fontmap", Font.fontmap)
+InfoMessage:saveInfoMessageSettings()
 G_reader_settings:close()
 
 -- @TODO dirty workaround, find a way to force native system poll

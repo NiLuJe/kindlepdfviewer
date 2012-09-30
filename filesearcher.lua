@@ -7,14 +7,10 @@ require "dialog"
 require "extentions"
 
 FileSearcher = {
-	-- title height
-	title_H = 40,
-	-- spacing between lines
-	spacing = 36,
-	-- foot height
-	foot_H = 28,
-	-- horisontal margin
-	margin_H = 10,
+	title_H = 40,	-- title height
+	spacing = 36,	-- spacing between lines
+	foot_H = 28,	-- foot height
+	margin_H = 10,	-- horisontal margin
 
 	-- state buffer
 	dirs = {},
@@ -24,11 +20,12 @@ FileSearcher = {
 	page = 0,
 	current = 1,
 	oldcurrent = 1,
+	commands = nil,
 }
 
 function FileSearcher:readDir()
 	self.dirs = {self.path}
-	self.files = {}
+	self.files = { {dir=self.path, name=".."} }
 	while #self.dirs ~= 0 do
 		new_dirs = {}
 		-- handle each dir
@@ -63,12 +60,12 @@ function FileSearcher:setPath(newPath)
 end
 
 function FileSearcher:setSearchResult(keywords)
-	self.result = {}
+	self.result = { {dir=self.path, name=".."} }
 	if keywords == " " then -- one space to show all files
 		self.result = self.files
 	else
 		for __,f in pairs(self.files) do
-			if string.find(string.lower(f.name), keywords) then
+			if string.find(string.lower(f.name), string.lower(keywords)) then
 				table.insert(self.result, f)
 			end
 		end
@@ -77,6 +74,7 @@ function FileSearcher:setSearchResult(keywords)
 	self.items = #self.result
 	self.page = 1
 	self.current = 1
+	return self.items
 end
 
 function FileSearcher:init(search_path)
@@ -85,7 +83,8 @@ function FileSearcher:init(search_path)
 	else
 		self:setPath("/mnt/us/documents")
 	end
-	self:addAllCommands()
+	-- to initialize only once
+	if not self.commands then self:addAllCommands() end
 end
 
 function FileSearcher:prevItem()
@@ -119,7 +118,6 @@ end
 
 function FileSearcher:addAllCommands()
 	self.commands = Commands:new{}
-	-- last documents
 	self.commands:add(KEY_L, nil, "L",
 		"last documents",
 		function(self)
@@ -128,7 +126,6 @@ function FileSearcher:addAllCommands()
 			self.pagedirty = true
 		end
 	)
-	-- show help page
 	self.commands:add(KEY_H, nil, "H",
 		"show help page",
 		function(self)
@@ -136,16 +133,7 @@ function FileSearcher:addAllCommands()
 			self.pagedirty = true
 		end
 	) 
-	-- make screenshot
-	self.commands:add(KEY_P, MOD_SHIFT, "P",
-		"make screenshot",
-		function(self)
-			Screen:screenshot()
-		end
-	) 
-	
-	-- file info
-	self.commands:add({KEY_FW_RIGHT, KEY_I}, nil, "joypad right",
+	self.commands:add(KEY_FW_RIGHT, nil, "joypad right",
 		"document details",
 		function(self)
 			file_entry = self.result[self.perpage*(self.page-1)+self.current]
@@ -153,15 +141,14 @@ function FileSearcher:addAllCommands()
 			self.pagedirty = true
 		end
 	) 
-	
 	self.commands:add(KEY_FW_UP, nil, "joypad up",
-		"goto previous item",
+		"previous item",
 		function(self)
 			self:prevItem()
 		end
 	)
 	self.commands:add(KEY_FW_DOWN, nil, "joypad down",
-		"goto next item",
+		"next item",
 		function(self)
 			self:nextItem()
 		end
@@ -196,38 +183,29 @@ function FileSearcher:addAllCommands()
 	self.commands:add(KEY_S, nil, "S",
 		"invoke search inputbox",
 		function(self)
-			old_keywords = self.keywords
+			-- NuPogodi, 30.09.12: be sure that something is found
+			local old_keywords = self.keywords
+			local old_data = self.result
 			self.keywords = InputBox:input(G_height - 100, 100,
 				"Search:", old_keywords)
 			if self.keywords then
 				self:setSearchResult(self.keywords)
-			else
+			end
+			if #self.result < 2 then
+				InfoMessage:inform("No hits found! ", 2000, 1, MSG_WARN,
+					"The search has given no results! Please, try another keyword.")
+				-- restoring the original data
+				self.result = old_data
+				self.items = #self.result
 				self.keywords = old_keywords
 			end
 			self.pagedirty = true
 		end
 	)
-	self.commands:add({KEY_F, KEY_AA}, nil, "F",
-		"font menu",
+	self.commands:add({KEY_F, KEY_AA}, nil, "F, Aa",
+		"change font faces",
 		function(self)
-				-- NuPogodi, 18.05.12: define the number of the current font in face_list 
-				local item_no = 0
-				local face_list = Font:getFontList() 
-				while face_list[item_no] ~= Font.fontmap.cfont and item_no < #face_list do 
-					item_no = item_no + 1 
-				end
-				
-				local fonts_menu = SelectMenu:new{
-				menu_title = "Fonts Menu",
-				item_array = face_list,
-				-- NuPogodi, 18.05.12: define selected item
-				current_entry = item_no - 1,
-			}
-			local re, font = fonts_menu:choose(0, G_height)
-			if re then
-				Font.fontmap["cfont"] = font
-				Font:update()
-			end
+			Font:chooseFonts()
 			self.pagedirty = true
 		end
 	)
@@ -235,62 +213,55 @@ function FileSearcher:addAllCommands()
 		"open selected item",
 		function(self)
 			file_entry = self.result[self.perpage*(self.page-1)+self.current]
+			if file_entry.name == ".." then return "break" end
 			file_full_path = file_entry.dir .. "/" .. file_entry.name
-
 			openFile(file_full_path)
 			--reset height and item index if screen has been rotated
 			local item_no = self.perpage * (self.page - 1) + self.current
 			self.perpage = math.floor(G_height / self.spacing) - 2
 			self.current = item_no % self.perpage
 			self.page = math.floor(item_no / self.perpage) + 1
-
 			self.pagedirty = true
 		end
 	)
-	self.commands:add({KEY_BACK, KEY_HOME}, nil, "Back",
-		"back",
-		function(self)
-			return "break"
-		end
-	)
-	self.commands:add({KEY_DEL}, nil, "Del",
+	self.commands:add(KEY_DEL, nil, "Del",
 		"delete document",
 		function(self)
-			file_entry = self.result[self.perpage*(self.page-1)+self.current]
+			local file_entry = self.result[self.perpage*(self.page-1)+self.current]
+			if file_entry.name == ".." then
+				InfoMessage:inform("<UP-DIR> ", 1000, 1, MSG_WARN, msg)
+				return
+			end
 			local file_to_del = file_entry.dir .. "/" .. file_entry.name
-			InfoMessage:show("Press \'Y\' to confirm deleting... ",0)
-			while true do
-				ev = input.saveWaitForEvent()
-				ev.code = adjustKeyEvents(ev)
-				if ev.type == EV_KEY and ev.value ~= EVENT_VALUE_KEY_RELEASE then
-					if ev.code == KEY_Y then
-						-- delete the file itself
-						os.remove(file_to_del)
-						-- and its history file, if any
-						os.remove(DocToHistory(file_to_del))
-						 -- to avoid showing just deleted file
-						self:init( self.path )
-						self:choose(self.keywords)
-					end
-					self.pagedirty = true
-					break
-				end -- if ev.type == EV_KEY
-			end -- while
+			if InfoMessage.InfoMethod[MSG_CONFIRM] == 0 then -- silent regime
+				os.remove(file_to_del) -- delete the file itself
+				os.remove(DocToHistory(file_to_del)) -- and its history file, if any
+				self:init(self.path) -- to avoid showing just deleted file
+				self:choose(self.keywords)
+			else
+				InfoMessage:inform("Press 'Y' to confirm ", nil, 0, MSG_CONFIRM, "Please, press key Y to confirm deleting")
+				if FileChooser:ReturnKey() == KEY_Y then
+					os.remove(file_to_del)
+					os.remove(DocToHistory(file_to_del))
+					self:init(self.path)
+					self:choose(self.keywords)
+				end
+			self.pagedirty = true
+			end
 		end
-	)	self.commands:add({KEY_SPACE}, nil, "Space",
+	)
+	self.commands:add(KEY_SPACE, nil, "Space",
 		"refresh page manually",
 		function(self)
 			self.pagedirty = true
 		end
 	)
---[[	self.commands:add({KEY_B}, nil, "B",
-		"file browser",
+	self.commands:add({KEY_BACK, KEY_HOME}, nil, "Back, '..', Home",
+		"back",
 		function(self)
-			--FileChooser:setPath(".")
-			FileChooser:choose(0, G_height)
-			self.pagedirty = true
+			return "break"
 		end
-	)]]
+	)
 end
 
 function FileSearcher:choose(keywords)
@@ -298,11 +269,15 @@ function FileSearcher:choose(keywords)
 	self.pagedirty = true
 	self.markerdirty = false
 
-
 	-- if given keywords, set new result according to keywords.
 	-- Otherwise, display the previous search result.
 	if keywords then
 		self:setSearchResult(keywords)
+	end
+	-- NuPogodi, 30.09.12: immediate quit (no redraw), if empty
+	if #self.result < 2 then -- only ".."
+		InfoMessage:inform("No hits found! ", nil, 1, MSG_WARN, "The search has given no results!")
+		return nil
 	end
 
 	while true do
@@ -313,34 +288,22 @@ function FileSearcher:choose(keywords)
 		if self.pagedirty then
 			self.markerdirty = true
 			fb.bb:paintRect(0, 0, G_width, G_height, 0)
-
-			-- draw menu title
-			DrawTitle("Search Results for \'"..string.upper(self.keywords).."\'",self.margin_H,0,self.title_H,4,tface)
-
 			-- draw results
 			local c
-			if self.items == 0 then -- nothing found
-				y = self.title_H + self.spacing * 2
-				renderUtf8Text(fb.bb, self.margin_H, y, cface,
-					"Sorry, no match found.", true)
-				renderUtf8Text(fb.bb, self.margin_H, y + self.spacing, cface,
-					"Please try a different keyword.", true)
-				self.markerdirty = false
-			else -- found something, draw it
-				for c = 1, self.perpage do
-					local i = (self.page - 1) * self.perpage + c
-					if i <= self.items then
-						y = self.title_H + (self.spacing * c) + 4
-						local ftype = string.lower(string.match(self.result[i].name, ".+%.([^.]+)") or "")
-						DrawFileItem(self.result[i].name,self.margin_H,y,ftype)
-					end
+			-- draw menu title
+			DrawTitle("Search Results for \'"..self.keywords.."\'".." ("..tostring(self.items).." hits)",
+				self.margin_H,0,self.title_H,3,tface)
+			for c = 1, self.perpage do
+				local i = (self.page - 1) * self.perpage + c
+				if i <= self.items then
+					y = self.title_H + (self.spacing * c) + 4
+					local ftype = string.lower(string.match(self.result[i].name, ".+%.([^.]+)") or "")
+					DrawFileItem(self.result[i].name,self.margin_H,y,ftype)
 				end
 			end
-
 			-- draw footer
 			all_page = math.ceil(self.items/self.perpage)
-			DrawFooter("Page "..self.page.." of "..all_page,fface,self.foot_H)
-			
+			DrawFooter("Page "..self.page.." of "..all_page,fface,self.foot_H)		
 		end
 
 		if self.markerdirty then

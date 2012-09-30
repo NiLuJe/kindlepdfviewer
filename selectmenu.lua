@@ -5,24 +5,14 @@ require "font"
 require "commands"
 
 SelectMenu = {
-	-- font for displaying item names
-	fsize = 22,
-	-- font for page title
-	tfsize = 25,
-	-- font for paging display
-	ffsize = 16,
-	-- font for item shortcut
-	sface = Font:getFace("scfont", 22),
+	fsize = 22,	-- font for displaying item names
+	tfsize = 25,	-- font for page title
+	ffsize = 16,-- font for paging display
 
-	-- title height
-	title_H = 40,
-	-- spacing between lines
-	spacing = 36,
-	-- foot height
-	foot_H = 27,
-	-- horisontal margin
-	margin_H = 10,
-	-- NuPogodi, 18.05.12: new parameter
+	title_H = 40,	-- title height
+	spacing = 36,	-- spacing between lines
+	foot_H = 27,	-- foot height
+	margin_H = 10,	-- horisontal margin
 	current_entry = 0,
 
 	menu_title = "No Title",
@@ -32,7 +22,7 @@ SelectMenu = {
 
 	item_shortcuts = {
 		"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P",
-		"A", "S", "D", "F", "G", "H", "J", "K", "L", "Del",
+		"A", "S", "D", "F", "G", "H", "J", "K", "L", "/",
 		"Z", "X", "C", "V", "B", "N", "M", ".", "Sym", "Ent",
 		},
 	last_shortcut = 0,
@@ -44,6 +34,14 @@ SelectMenu = {
 	selected_item = nil,
 
 	commands = nil,
+	expandable = false, -- if true handle Right/Left FW selector keys
+	deletable = false, -- if true handle Del key as a request to delete item
+	-- note that currently expandable and deletable are mutually exclusive
+
+	-- NuPogodi, 30.08.12: define font to render menu items
+	own_glyph = 0,	-- render menu items with default "cfont"
+	-- own_glyph = 1 => own glyphs for items like "Droid/DroidSans.ttf"
+	-- own_glyph = 2 => own glyphs for Font.fontmap._index like "ffont", "tfont", etc.
 }
 
 function SelectMenu:new(o)
@@ -75,7 +73,7 @@ end
 function SelectMenu:addAllCommands()
 	self.commands = Commands:new{}
 
-	self.commands:add(KEY_FW_UP, nil, "",
+	self.commands:add(KEY_FW_UP, nil, "joypad up",
 		"previous item",
 		function(sm)
 			if sm.current == 1 then
@@ -90,7 +88,7 @@ function SelectMenu:addAllCommands()
 			end
 		end
 	)
-	self.commands:add(KEY_FW_DOWN, nil, "",
+	self.commands:add(KEY_FW_DOWN, nil, "joypad down",
 		"next item",
 		function(sm)
 			if sm.current == sm.perpage then
@@ -108,7 +106,7 @@ function SelectMenu:addAllCommands()
 			end
 		end
 	)
-	self.commands:add({KEY_PGFWD, KEY_LPGFWD}, nil, "",
+	self.commands:add({KEY_PGFWD, KEY_LPGFWD}, nil, ">",
 		"next page",
 		function(sm)
 			if sm.page < (sm.items / sm.perpage) then
@@ -123,7 +121,7 @@ function SelectMenu:addAllCommands()
 			end
 		end
 	)
-	self.commands:add({KEY_PGBCK, KEY_LPGBCK}, nil, "",
+	self.commands:add({KEY_PGBCK, KEY_LPGBCK}, nil, "<",
 		"previous page",
 		function(sm)
 			if sm.page > 1 then
@@ -135,8 +133,8 @@ function SelectMenu:addAllCommands()
 			end
 		end
 	)
-	self.commands:add(KEY_FW_PRESS, nil, "",
-		"select menu item",
+	self.commands:add(KEY_FW_PRESS, nil, "joypad center",
+		"select item",
 		function(sm)
 			if sm.items == 0 then
 				return "break"
@@ -145,12 +143,44 @@ function SelectMenu:addAllCommands()
 			end
 		end
 	)
+	if self.deletable then
+		self.commands:add(KEY_DEL, nil, "Del",
+			"delete item",
+			function(sm)
+				self.selected_item = (sm.perpage * (sm.page - 1) + sm.current)
+				return "delete"
+			end
+		)
+	end
+	if self.expandable then
+		self.commands:add(KEY_FW_RIGHT, nil, "joypad right",
+			"expand item",
+			function(sm)
+				self.selected_item = (sm.perpage * (sm.page - 1) + sm.current)
+				return "expand"
+			end
+		)
+		self.commands:add(KEY_FW_LEFT, nil, "joypad left",
+			"collapse item",
+			function(sm)
+				self.selected_item = (sm.perpage * (sm.page - 1) + sm.current)
+				return "collapse"
+			end
+		)
+		self.commands:add(KEY_FW_RIGHT, MOD_SHIFT, "joypad right",
+			"expand all subitems",
+			function(sm)
+				self.selected_item = (sm.perpage * (sm.page - 1) + sm.current)
+				return "expand all"
+			end
+		)
+	end
 	local KEY_Q_to_P = {}
 	for i = KEY_Q, KEY_P do 
 		table.insert(KEY_Q_to_P, Keydef:new(i, nil, ""))
 	end
 	self.commands:addGroup("Q to P", KEY_Q_to_P, 
-		"Select menu item with Q to E key as shortcut",
+		"select item with Q to P key as shortcut",
 		function(sm, keydef)
 			sm.selected_item = sm:getItemIndexByShortCut(
 				sm.item_shortcuts[ keydef.keycode - KEY_Q + 1 ], sm.perpage)
@@ -161,7 +191,7 @@ function SelectMenu:addAllCommands()
 		table.insert(KEY_A_to_L, Keydef:new(i, nil, ""))
 	end
 	self.commands:addGroup("A to L", KEY_A_to_L, 
-		"Select menu item with A to L key as shortcut",
+		"select item with A to L key as shortcut",
 		function(sm, keydef)
 			sm.selected_item = sm:getItemIndexByShortCut(
 				sm.item_shortcuts[ keydef.keycode - KEY_A + 11 ], sm.perpage)
@@ -172,39 +202,44 @@ function SelectMenu:addAllCommands()
 		table.insert(KEY_Z_to_M, Keydef:new(i, nil, ""))
 	end
 	self.commands:addGroup("Z to M", KEY_Z_to_M, 
-		"Select menu item with Z to M key as shortcut",
+		"select item with Z to M key as shortcut",
 		function(sm, keydef)
 			sm.selected_item = sm:getItemIndexByShortCut(
 				sm.item_shortcuts[ keydef.keycode - KEY_Z + 21 ], sm.perpage)
 		end
 	)
-	self.commands:add(KEY_DEL, nil, "",
-		"Select menu item with del key as shortcut",
+	self.commands:add(KEY_SLASH, nil, "/",
+		"select item with / key as shortcut",
 		function(sm)
-			sm.selected_item = sm:getItemIndexByShortCut("Del", sm.perpage)
+			sm.selected_item = sm:getItemIndexByShortCut("/", sm.perpage)
 		end
 	)
-	self.commands:add(KEY_DOT, nil, "",
-		"Select menu item with dot key as shortcut",
+	self.commands:add(KEY_DOT, nil, ".",
+		"select item with dot key as shortcut",
 		function(sm)
 			sm.selected_item = sm:getItemIndexByShortCut(".", sm.perpage)
 		end
 	)
-	self.commands:add({KEY_SYM, KEY_SLASH}, nil, "",
-		"Select menu item with sym/slash key as shortcut",
+	self.commands:add(KEY_SYM, nil, "Sym",
+		"select item with Sym key as shortcut",
 		function(sm)
-		-- DXG has slash after dot
 			sm.selected_item = sm:getItemIndexByShortCut("Sym", sm.perpage)
 		end
 	)
-	self.commands:add(KEY_ENTER, nil, "",
-		"Select menu item with enter key as shortcut",
+	self.commands:add(KEY_ENTER, nil, "Enter",
+		"select item with Enter key as shortcut",
 		function(sm)
 			sm.selected_item = sm:getItemIndexByShortCut("Ent", sm.perpage)
 		end
 	)
-	self.commands:add(KEY_BACK, nil, "",
-		"Exit menu",
+	self.commands:add(KEY_H,MOD_ALT,"H",
+		"show help page",
+		function(sm)
+		HelpPage:show(0, G_height, sm.commands)
+		sm.pagedirty = true
+	end)
+	self.commands:add({KEY_BACK,KEY_HOEM}, nil, "Back, Home",
+		"exit menu",
 		function(sm)
 			return "break"
 		end
@@ -214,8 +249,8 @@ end
 function SelectMenu:clearCommands()
 	self.commands = Commands:new{}
 
-	self.commands:add(KEY_BACK, nil, "",
-		"Exit menu",
+	self.commands:add({KEY_BACK,KEY_HOEM}, nil, "Back, Home",
+		"exit menu",
 		function(sm)
 			return "break"
 		end)
@@ -229,22 +264,21 @@ function SelectMenu:choose(ypos, height)
 	self.pagedirty = true
 	self.markerdirty = false
 	self.last_shortcut = 0
-	
-	-- NuPogodi, 18.02.12: let us define the starting position
-	-- If it was, certainly, send before by SelectMenu:new() via current_entry
+
 	self.current_entry = math.min(self.current_entry,self.items)
-	-- self.current_entry = math.max(self.current_entry,1)
+
 	-- now calculating the page & cursor
 	self.page = math.floor(self.current_entry / self.perpage) + 1
 	self.page = math.max(1, self.page)
 	self.current = self.current_entry - (self.page - 1) * self.perpage + 1
 	self.current = math.max(1, self.current)
-	-- end of changes (NuPogodi)
-	
+	local own_face
+
 	while true do
 		local cface = Font:getFace("cfont", 22)
 		local tface = Font:getFace("tfont", 25)
 		local fface = Font:getFace("ffont", 16)
+		local sface = Font:getFace("scfont", 22)
 		
 		local lx = self.margin_H + 40
 		local fw = fb.bb:getWidth() - lx - self.margin_H
@@ -252,10 +286,8 @@ function SelectMenu:choose(ypos, height)
 		if self.pagedirty then
 			fb.bb:paintRect(0, ypos, fb.bb:getWidth(), height, 0)
 			self.markerdirty = true
-			-- draw menu title (new version with clock & battery)
-			DrawTitle(self.menu_title,self.margin_H,0,self.title_H,4,tface)
-			
-			
+			-- draw menu title
+			DrawTitle(self.menu_title,self.margin_H,0,self.title_H,3,tface)
 			-- draw items
 			fb.bb:paintRect(0, ypos + self.title_H + self.margin_H, fb.bb:getWidth(), height - self.title_H, 0)
 			if self.items == 0 then
@@ -286,19 +318,20 @@ function SelectMenu:choose(ypos, height)
 							renderUtf8Text(fb.bb, self.margin_H + 3, y, fface,
 								self.item_shortcuts[c], true)
 						else
-							renderUtf8Text(fb.bb, self.margin_H + 8, y, self.sface,
+							renderUtf8Text(fb.bb, self.margin_H + 8, y, sface,
 								self.item_shortcuts[c], true)
 						end
 
 						self.last_shortcut = c
-						-- NuPogodi, 15.05.12: paint items by own glyphs if the menu title == 'Fonts Menu', 
-						-- but not "Fonts Menu " (crereader.lua); the problem is crereader creates own list
-						-- with the font families, rather then filenames of available fonts
-						local own_face = cface
-						if self.menu_title == "Fonts Menu" then
+						-- NuPogodi, 30.08.12: improved method to use own fontface for each menu item
+						if self.own_glyph == 1 then -- Font.fontmap[_index], like "Droid/DroidSans.ttf"
 							own_face = Font:getFace(self.item_array[i], 22)
+						elseif self.own_glyph == 2 then -- Font.fontmap._index, like "[cfont] description"
+							own_face = Font:getFace(string.sub(string.match(self.item_array[i],"%b[]"), 2, -2), 22)
+						else
+							own_face = cface
 						end
-						-- NuPogodi, 18.05.12: rendering menu items ( fixed too long strings)
+						-- rendering menu items
 						if sizeUtf8Text(lx,fb.bb:getWidth(),own_face,self.item_array[i],true).x < (fw - 10) then
 							renderUtf8Text(fb.bb,lx,y,own_face,self.item_array[i],true)
 						else
@@ -311,9 +344,8 @@ function SelectMenu:choose(ypos, height)
 				end -- for c=1, self.perpage
 			end -- if self.items == 0
 
-			-- draw footer
-			DrawFooter("Page "..self.page.." of "..(math.ceil(self.items / self.perpage)),fface,self.foot_H)
-			
+			local footer = "Page "..self.page.." of "..(math.ceil(self.items / self.perpage)).."  - Press Alt-H for help"
+			renderUtf8Text(fb.bb, self.margin_H, height-7, fface, footer, true)
 		end
 
 		if self.markerdirty then
@@ -358,6 +390,17 @@ function SelectMenu:choose(ypos, height)
 			end
 
 			if self.selected_item ~= nil then
+				if self.expandable then
+					if ret_code == "expand" then
+						return nil, self.selected_item
+					elseif ret_code == "collapse" then
+						return nil, -self.selected_item
+					elseif ret_code == "expand all" then
+						return nil, self.selected_item, "all"
+					end
+				elseif self.deletable and ret_code == "delete" then
+						return nil, self.selected_item
+				end
 				Debug("# selected "..self.selected_item)
 				return self.selected_item, self.item_array[self.selected_item]
 			end
