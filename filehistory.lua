@@ -112,40 +112,10 @@ end
 
 function FileHistory:addAllCommands()
 	self.commands = Commands:new{}
-	-- search among last documents
-	self.commands:add(KEY_S, nil, "S",
-		"search among files",
-		function(self)
-			-- NuPogodi, 30.09.12: be sure that something is found
-			local old_keywords = self.keywords
-			local old_data = self.result
-			self.keywords = InputBox:input(G_height - 100, 100, "Search:", old_keywords)
-			if self.keywords then
-				self:setSearchResult(self.keywords)
-			end
-			if #self.result < 2 then -- ".."
-				InfoMessage:inform("No hits found! ", 2000, 1, MSG_WARN,
-					"The search has given no results! Please, try another keyword.")
-				-- restoring the original data
-				self.result = old_data
-				self.items = #self.result
-				self.keywords = old_keywords
-			end
-			self.pagedirty = true
-		end
-	)
 	self.commands:add(KEY_H, nil, "H",
 		"show help page",
 		function(self)
 			HelpPage:show(0, G_height, self.commands)
-			self.pagedirty = true
-		end
-	)
-	self.commands:add(KEY_FW_RIGHT, nil, "joypad right",
-		"document details",
-		function(self)
-			file_entry = self.result[self.perpage*(self.page-1)+self.current]
-			FileInfo:show(file_entry.dir,file_entry.name)
 			self.pagedirty = true
 		end
 	)
@@ -159,6 +129,17 @@ function FileHistory:addAllCommands()
 		"next item",
 		function(self)
 			self:nextItem()
+		end
+	)
+	-- NuPogodi, 01.10.12: fast jumps to items at positions 10, 20, .. 90, 0% within the list
+	local numeric_keydefs, i = {}
+	for i=1, 10 do numeric_keydefs[i]=Keydef:new(KEY_1+i-1, nil, tostring(i%10)) end
+	self.commands:addGroup("[1, 2 .. 9, 0]", numeric_keydefs,
+		"item at position 0%, 10% .. 90%, 100%",
+		function(self)
+			local target_item = math.ceil(self.items * (keydef.keycode-KEY_1) / 9)
+			self.current, self.page, self.markerdirty, self.pagedirty = 
+				gotoTargetItem(target_item, self.items, self.current, self.page, self.perpage)
 		end
 	)
 	self.commands:add({KEY_PGFWD, KEY_LPGFWD}, nil, ">",
@@ -188,6 +169,57 @@ function FileHistory:addAllCommands()
 			end
 		end
 	)
+	self.commands:add(KEY_G, nil, "G", -- NuPogodi, 01.10.12: goto page No.
+		"goto page",
+		function(self)
+			local n = math.ceil(self.items / self.perpage)
+			local page = NumInputBox:input(G_height-100, 100, "Page:", "current page "..self.page.." of "..n, true)
+			if pcall(function () page = math.floor(page) end) -- convert string to number
+			and page ~= self.page and page > 0 and page <= n then
+				self.page = page
+				if self.current + (page-1)*self.perpage > self.items then
+					self.current = self.items - (page-1)*self.perpage
+				end
+			end
+			self.pagedirty = true
+		end
+	)
+	self.commands:add(KEY_FW_RIGHT, nil, "joypad right",
+		"document details",
+		function(self)
+			local file_entry = self.result[self.perpage*(self.page-1)+self.current]
+			if file_entry.name == ".." then 
+				warningUnsupportedFunction()
+				return
+			end -- do not show details
+			FileInfo:show(file_entry.dir,file_entry.name)
+			self.pagedirty = true
+		end
+	)
+	self.commands:add(KEY_S, nil, "S",
+		"invoke search inputbox",
+		function(self)
+			-- NuPogodi, 30.09.12: be sure that something is found
+			local old_keywords = self.keywords
+			local old_data = self.result
+			local old_page, old_current = self.page, self.current
+			self.keywords = InputBox:input(G_height - 100, 100, "Search:", old_keywords)
+			if self.keywords then
+				self:setSearchResult(self.keywords)
+			end
+			if #self.result < 2 then
+				InfoMessage:inform("No hits! Try another keyword. ", 2000, 1, MSG_WARN,
+					"The search has given no results! Please, try another keyword.")
+				-- restoring the original data
+				self.result = old_data
+				self.items = #self.result
+				self.keywords = old_keywords
+				self.page = old_page
+				self.current = old_current
+			end
+			self.pagedirty = true
+		end
+	)
 	self.commands:add({KEY_F, KEY_AA}, nil, "F, Aa",
 		"change font faces",
 		function(self)
@@ -198,7 +230,7 @@ function FileHistory:addAllCommands()
 	self.commands:add({KEY_ENTER, KEY_FW_PRESS}, nil, "Enter",
 		"open selected document",
 		function(self)
-			file_entry = self.result[self.perpage*(self.page-1)+self.current]
+			local file_entry = self.result[self.perpage*(self.page-1)+self.current]
 			if file_entry.name == ".." then return "break" end -- quit
 			file_full_path = file_entry.dir .. "/" .. file_entry.name
 			openFile(file_full_path)
@@ -213,8 +245,11 @@ function FileHistory:addAllCommands()
 	self.commands:add({KEY_DEL}, nil, "Del",
 		"delete history entry",
 		function(self)
-			file_entry = self.result[self.perpage*(self.page-1)+self.current]
-			if file_entry.name == ".." then return end -- do not delete
+			local file_entry = self.result[self.perpage*(self.page-1)+self.current]
+			if file_entry.name == ".." then
+				warningUnsupportedFunction()
+				return
+			end -- do not delete
 			local file_to_del = file_entry.dir .. "/" .. file_entry.name
 			if InfoMessage.InfoMethod[MSG_CONFIRM] == 0 then -- silent regime
 				os.remove(DocToHistory(file_to_del))

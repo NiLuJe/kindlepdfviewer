@@ -263,33 +263,6 @@ function FileChooser:addAllCommands()
 			self.pagedirty = true
 		end
 	)
-	self.commands:add({KEY_PGFWD, KEY_LPGFWD}, nil, ">",
-		"next page",
-		function(self)
-			if self.page < (self.items / self.perpage) then
-				if self.current + self.page*self.perpage > self.items then
-					self.current = self.items - self.page*self.perpage
-				end
-				self.page = self.page + 1
-				self.pagedirty = true
-			else
-				self.current = self.items - (self.page-1)*self.perpage
-				self.markerdirty = true
-			end
-		end
-	)
-	self.commands:add({KEY_PGBCK, KEY_LPGBCK}, nil, "<",
-		"previous page",
-		function(self)
-			if self.page > 1 then
-				self.page = self.page - 1
-				self.pagedirty = true
-			else
-				self.current = 1
-				self.markerdirty = true
-			end
-		end
-	)
 	self.commands:add(KEY_FW_DOWN, nil, "joypad down",
 		"next item",
 		function(self)
@@ -323,14 +296,66 @@ function FileChooser:addAllCommands()
 			end
 		end
 	)
+	-- NuPogodi, 01.10.12: fast jumps to items at positions 10, 20, .. 90, 0% within the list
+	local numeric_keydefs, i = {}
+	for i=1, 10 do numeric_keydefs[i]=Keydef:new(KEY_1+i-1, nil, tostring(i%10)) end
+	self.commands:addGroup("[1, 2 .. 9, 0]", numeric_keydefs,
+		"item at position 0%, 10% .. 90%, 100%",
+		function(self)
+			local target_item = math.ceil(self.items * (keydef.keycode-KEY_1) / 9)
+			self.current, self.page, self.markerdirty, self.pagedirty = 
+				gotoTargetItem(target_item, self.items, self.current, self.page, self.perpage)
+		end
+	)
+	self.commands:add({KEY_PGFWD, KEY_LPGFWD}, nil, ">",
+		"next page",
+		function(self)
+			if self.page < (self.items / self.perpage) then
+				if self.current + self.page*self.perpage > self.items then
+					self.current = self.items - self.page*self.perpage
+				end
+				self.page = self.page + 1
+				self.pagedirty = true
+			else
+				self.current = self.items - (self.page-1)*self.perpage
+				self.markerdirty = true
+			end
+		end
+	)
+	self.commands:add({KEY_PGBCK, KEY_LPGBCK}, nil, "<",
+		"previous page",
+		function(self)
+			if self.page > 1 then
+				self.page = self.page - 1
+				self.pagedirty = true
+			else
+				self.current = 1
+				self.markerdirty = true
+			end
+		end
+	)
+	self.commands:add(KEY_G, nil, "G", -- NuPogodi, 01.10.12: goto page No.
+		"goto page",
+		function(self)
+			local n = math.ceil(self.items / self.perpage)
+			local page = NumInputBox:input(G_height-100, 100, "Page:", "current page "..self.page.." of "..n, true)
+			if pcall(function () page = math.floor(page) end) -- convert string to number
+			and page ~= self.page and page > 0 and page <= n then
+				self.page = page
+				if self.current + (page-1)*self.perpage > self.items then
+					self.current = self.items - (page-1)*self.perpage
+				end
+			end
+			self.pagedirty = true
+		end
+	)
 	self.commands:add(KEY_FW_RIGHT, nil, "joypad right",
 		"show document information",
 		function(self)
 			local folder = self.dirs[self.perpage*(self.page-1)+self.current]
 			if folder then
 				if folder == ".." then
-					InfoMessage:inform("<UP-DIR> ", 1000, 1, MSG_WARN,
-						"Obtaining an information about this folder is not supported.")
+					warningUnsupportedFunction()
 				else
 					folder = self.path.."/"..folder
 					if FileInfo:show(folder) == "goto" then 
@@ -359,15 +384,15 @@ function FileChooser:addAllCommands()
 			self.pagedirty = true
 		end
 	)
--- modified to delete both files and empty folders
+	-- modified to delete both files and empty folders
 	self.commands:add(KEY_DEL, nil, "Del",
 		"delete selected item",
 		function(self)
 			local pos = self.perpage*(self.page-1)+self.current
 			local folder = self.dirs[pos]
-			local msg, confirm = "This folder can not be deleted!", "Please, press key Y to confirm deleting"
+			local confirm = "Please, press key Y to confirm deleting"
 			if folder == ".." then
-				InfoMessage:inform("'..' cannot be deleted! ", 1500, 1, MSG_WARN, msg)
+				warningUnsupportedFunction()
 			elseif folder then
 				if InfoMessage.InfoMethod[MSG_CONFIRM] == 0 then -- silent regime
 					self:deleteFolder(folder)
@@ -419,7 +444,7 @@ function FileChooser:addAllCommands()
 			self:changeFileChooserMode()
 		end
 	)
-	-- NuPogodi, 25.09.12: new functions to tune the way how to inform user about the reader events
+-- NuPogodi, 25.09.12: new functions to tune the way how to inform user about the reader events
 	local popup_text = "Unstable... For experts only! "
 	local voice_text = "This function is still under development and available only for experts and beta testers."
 	self.commands:add(KEY_I, nil, "I",
@@ -582,7 +607,7 @@ end
 function FileChooser:FullFileName()
 	local file
 	local folder = self.dirs[self.perpage*(self.page-1)+self.current]
-	local msg = "The requested operation is not yet applicable to folders."
+	local msg = "The requested operation is not applicable to folders."
 	if folder == ".." then
 		InfoMessage:inform("<UP-DIR> ", 1000, 1, MSG_WARN, msg)
 	elseif folder then
@@ -658,4 +683,27 @@ function FileChooser:deleteFileAtPosition(pos)
 	self.items = self.items - 1
 	self.current = self.current - 1
 	self.pagedirty = true
+end
+
+-- NuPogodi, 01.10.12: jump to defined item in the itemlist
+function gotoTargetItem(target_item, all_items, current_item, current_page, perpage)
+	target_item = math.max(math.min(target_item, all_items), 1)
+	local target_page = math.ceil(target_item/perpage)
+	local target_curr = target_item % perpage
+	local pagedirty, markerdirty = false, false
+	if target_page ~= current_page then
+		current_page = target_page
+		current_item = target_curr
+		pagedirty = true
+		markerdirty = true
+	elseif target_curr ~= current_item then 
+		current_item = target_curr
+		markerdirty = true
+	end
+	return current_item, current_page, markerdirty, pagedirty
+end
+
+function warningUnsupportedFunction()
+	InfoMessage:inform("Unsupported function! ", 2000, 1, MSG_WARN,
+		"The requested function is not supported.")
 end
