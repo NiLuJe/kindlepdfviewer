@@ -34,7 +34,7 @@ HOSTAR:=ar
 # Base CFLAGS, without arch. We'll need it for luajit, because its Makefiles do some tricky stuff to differentiate HOST/TARGET
 BASE_CFLAGS:=-O2 -ffast-math -pipe -fomit-frame-pointer
 # Use this for debugging:
-#BASE_CFLAGS:=-O0 -g
+#BASE_CFLAGS:=-O0 -g3 -fno-omit-frame-pointer
 # Misc GCC tricks to ensure backward compatibility with the K2, even when using a fairly recent TC (Linaro/MG).
 # NOTE: -mno-unaligned-access is needed for TC based on Linaro 4.6/4.7 or GCC 4.7, or weird crap happens on FW 2.x. We unfortunately can't set it by default, since it's a new flag.
 # A possible workaround would be to set the alignment trap to fixup (echo 2 > /proc/cpu/alignment) in the launch script, but that's terribly ugly, and might severly nerf performance...
@@ -47,6 +47,8 @@ HOSTCFLAGS:=$(HOST_ARCH) $(BASE_CFLAGS)
 CFLAGS:=$(BASE_CFLAGS)
 CXXFLAGS:=$(BASE_CFLAGS)
 LDFLAGS:=-Wl,-O1 -Wl,--as-needed
+# LuaJIT's doc tells us to use these settings when linking luajit statically...
+MAIN_LDFLAGS:=-Wl,-E
 
 DYNAMICLIBSTDCPP:=-lstdc++
 ifdef STATICLIBSTDCPP
@@ -132,6 +134,7 @@ kpdfview: kpdfview.o einkfb.o pdf.o blitbuffer.o drawcontext.o input.o $(POPENNS
 		$(CRENGINELIBS) \
 		$(STATICLIBSTDCPP) \
 		$(LDFLAGS) \
+		$(MAIN_LDFLAGS) \
 		-o $@ \
 		-lm -ldl -lpthread \
 		$(EMU_LDFLAGS) \
